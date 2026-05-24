@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Pre-commit：扫描暂存区敏感信息，命中则阻止提交
+
+set -euo pipefail
+
+RED=$(tput setaf 1 2>/dev/null || echo "")
+BOLD=$(tput bold 2>/dev/null || echo "")
+RESET=$(tput sgr0 2>/dev/null || echo "")
+
+FOUND=0
+
+red() {
+    printf "%s%s%s\n" "$RED$BOLD" "$1" "$RESET"
+}
+
+# 不检查的项目文件（工具脚本自身、CI配置等）
+SKIP_GLOB="hooks/*|*.sh|.gitignore"
+
+# 暂存区新增/修改的文件列表（不含删除，跳过指定文件）
+FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -vE "$SKIP_GLOB" || true)
+
+if [ -z "$FILES" ]; then
+    exit 0
+fi
+
+check_pattern() {
+    local pattern="$1"
+    local label="$2"
+
+    # 获取二进制文件列表（git 内部判断，不依赖 file 命令）
+    BINARIES=$(git diff --cached --numstat | awk '$1 == "-" && $2 == "-" {print $3}')
+    for f in $FILES; do
+        # 跳过二进制文件
+        if echo "$BINARIES" | grep -qxF "$f" 2>/dev/null; then
+            continue
+        fi
+        # 只检查暂存区版本
+        MATCH=$(git show ":$f" 2>/dev/null | grep -n -i -E -- "$pattern" || true)
+        if [ -n "$MATCH" ]; then
+            if [ "$FOUND" -eq 0 ]; then
+                echo ""
+                red "=== 敏感信息检测到，提交被阻止 ==="
+                echo ""
+            fi
+            FOUND=1
+            echo "[${label}] $f"
+            while IFS= read -r line; do
+                lineno=$(echo "$line" | cut -d: -f1)
+                content=$(echo "$line" | cut -d: -f2-)
+                printf "  L%-4s → %s\n" "$lineno" "$content"
+            done <<<"$MATCH"
+            echo ""
+        fi
+    done
+}
+
+# === 高危：私钥 ===
+check_pattern '-----BEGIN (RSA|DSA|EC|OPENSSH|PGP) PRIVATE KEY-----' '私钥'
+
+# === 高危：各类 Token ===
+check_pattern 'ghp_[0-9a-zA-Z]{36}'                          'GitHub Token'
+check_pattern 'github_pat_[0-9a-zA-Z_]{20,}'                  'GitHub PAT'
+check_pattern 'xox[baprs]-[0-9a-zA-Z-]{10,}'                  'Slack Token'
+check_pattern 'sk-[0-9a-zA-Z]{32,}'                           'OpenAI API Key'
+check_pattern 'AKIA[0-9A-Z]{16}'                              'AWS Access Key'
+check_pattern 'eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,}' 'JWT Token'
+
+# === 中危：密码明文 ===
+check_pattern '(password|passwd|pwd|secret|token)\s*[:=]\s*["'"'"'][^"'"'"']{3,}["'"'"']' '疑似明文密码'
+
+# === 中危：连接字符串含密码 ===
+check_pattern 'mongodb(\+srv)?://[^:]+:[^@]+@'               'MongoDB含密码'
+check_pattern 'mysql://[^:]+:[^@]+@'                          'MySQL含密码'
+check_pattern 'postgres(ql)?://[^:]+:[^@]+@'                  'PostgreSQL含密码'
+check_pattern 'redis://[^:]+:[^@]+@'                          'Redis含密码'
+
+# === 中危：.env 类型文件即使未被 gitignore ===
+for f in $FILES; do
+    if echo "$f" | grep -qiE '(\.env$|\.env\.|credentials|secret|password|token|\.pem$|\.key$|id_rsa|id_ed25519|id_ecdsa)'; then
+        if [ "$FOUND" -eq 0 ]; then
+            echo ""
+            red "=== 敏感信息检测到，提交被阻止 ==="
+            echo ""
+        fi
+        FOUND=1
+        echo "[高危文件名] $f — 请加入 .gitignore 后 git rm --cached"
+        echo ""
+    fi
+done
+
+if [ "$FOUND" -eq 1 ]; then
+    echo "——————————————————————————"
+    echo "如果是误报，执行: git commit --no-verify"
+    echo "如果是真敏感信息，请先移除再提交。"
+    echo "——————————————————————————"
+    exit 1
+fi
+
+exit 0
