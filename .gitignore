@@ -1,0 +1,61 @@
+# === 敏感信息 ===
+*.env
+*.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+*secret*
+*credential*
+*password*
+*.token
+
+# === 系统文件 ===
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# === IDE / 编辑器 ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === 依赖 / 构建 ===
+node_modules/
+__pycache__/
+*.pyc
+venv/
+.venv/
+vendor/
+dist/
+build/
+
+# === 日志 ===
+*.log
+
+# === 临时文件 ===
+*.tmp
+*.temp
+*.cache
+*.zip
+*.tar.gz
+*.rar
+
+# === 大文件（GitHub 限制 100MB） ===
+*.iso
+*.exe
+*.dll
+*.so
+*.dylib
+*.mp4
+*.avi
+*.mov
+*.psd
+*.ai
